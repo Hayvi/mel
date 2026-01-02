@@ -4,17 +4,41 @@
 (function() {
     'use strict';
     
-    let melBetBalance = 777.77;
+    let melBetBalance = 500.00; // Default, will be updated from HUD/messages
     
     // Identify which frame we're in
     const frameInfo = window === window.top ? 'TOP FRAME' : 'IFRAME: ' + window.location.href.substring(0, 50);
     console.log('[Pragmatic Canvas] EARLY INIT in', frameInfo);
     
+    // Try to get balance from HUD (top frame only)
+    function updateBalanceFromHUD() {
+        const hudBalance = document.querySelector('.hud-balance');
+        if (hudBalance) {
+            const text = hudBalance.textContent.replace('FUN ', '').trim();
+            const parsed = parseFloat(text.replace(/,/g, ''));
+            if (!isNaN(parsed) && parsed > 0) {
+                melBetBalance = parsed;
+                console.log('[Pragmatic Canvas] Got balance from HUD:', melBetBalance);
+                // Broadcast to iframes
+                document.querySelectorAll('iframe').forEach(iframe => {
+                    try {
+                        iframe.contentWindow.postMessage({ type: 'MELBET_BALANCE_UPDATE', balance: melBetBalance }, '*');
+                    } catch(e) {}
+                });
+            }
+        }
+    }
+    
+    // Poll for HUD balance in top frame
+    if (window === window.top) {
+        setInterval(updateBalanceFromHUD, 500);
+        setTimeout(updateBalanceFromHUD, 100);
+    }
+    
     // IMMEDIATELY intercept canvas - before any game code runs
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     
     HTMLCanvasElement.prototype.getContext = function(contextType, ...args) {
-        console.log('[Pragmatic Canvas] getContext called:', contextType, 'in', frameInfo);
         const context = originalGetContext.call(this, contextType, ...args);
         
         // Intercept 2D context
@@ -27,13 +51,10 @@
                 let modifiedText = text;
                 
                 if (typeof text === 'string') {
-                    // Replace ANY large balance-like number
                     const balanceRegex = /(\$?)(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})/g;
                     modifiedText = text.replace(balanceRegex, (match, dollar, whole, decimal) => {
                         const numValue = parseFloat(whole.replace(/,/g, '') + '.' + decimal);
-                        // Only replace credit/balance values (typically > 500), not bet amounts or buy prices
-                        if (numValue > 500) {
-                            console.log('[Pragmatic Canvas] REPLACING fillText:', match, '->', dollar + melBetBalance.toFixed(2));
+                        if (numValue > 5000) {
                             return dollar + melBetBalance.toFixed(2);
                         }
                         return match;
@@ -51,8 +72,7 @@
                     const balanceRegex = /(\$?)(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})/g;
                     modifiedText = text.replace(balanceRegex, (match, dollar, whole, decimal) => {
                         const numValue = parseFloat(whole.replace(/,/g, '') + '.' + decimal);
-                        if (numValue > 500) {
-                            console.log('[Pragmatic Canvas] REPLACING strokeText:', match, '->', dollar + melBetBalance.toFixed(2));
+                        if (numValue > 5000) {
                             return dollar + melBetBalance.toFixed(2);
                         }
                         return match;
@@ -63,16 +83,10 @@
             };
         }
         
-        // Also intercept WebGL context
-        if (context && (contextType === 'webgl' || contextType === 'webgl2') && !context._melBetIntercepted) {
-            context._melBetIntercepted = true;
-            console.log('[Pragmatic Canvas] WebGL context detected in', frameInfo, '- Game likely uses WebGL for rendering');
-        }
-        
         return context;
     };
     
-    // Also intercept CanvasRenderingContext2D prototype directly for existing contexts
+    // Also intercept prototype directly
     const proto = CanvasRenderingContext2D.prototype;
     const origFillText = proto.fillText;
     const origStrokeText = proto.strokeText;
@@ -83,9 +97,7 @@
             const balanceRegex = /(\$?)(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})/g;
             modifiedText = text.replace(balanceRegex, (match, dollar, whole, decimal) => {
                 const numValue = parseFloat(whole.replace(/,/g, '') + '.' + decimal);
-                // Only replace credit/balance values (typically > 500), not bet amounts or buy prices
-                if (numValue > 500) {
-                    console.log('[Pragmatic Canvas] PROTO fillText:', match, '->', dollar + melBetBalance.toFixed(2));
+                if (numValue > 5000) {
                     return dollar + melBetBalance.toFixed(2);
                 }
                 return match;
@@ -100,7 +112,7 @@
             const balanceRegex = /(\$?)(\d{1,3}(?:,\d{3})*|\d+)\.(\d{2})/g;
             modifiedText = text.replace(balanceRegex, (match, dollar, whole, decimal) => {
                 const numValue = parseFloat(whole.replace(/,/g, '') + '.' + decimal);
-                if (numValue > 500) {
+                if (numValue > 5000) {
                     return dollar + melBetBalance.toFixed(2);
                 }
                 return match;
@@ -109,11 +121,11 @@
         return origStrokeText.call(this, modifiedText, x, y, maxWidth);
     };
     
-    // Listen for balance updates
+    // Listen for balance updates from parent frame
     window.addEventListener('message', (e) => {
         if (e.data && e.data.type === 'MELBET_BALANCE_UPDATE') {
-            melBetBalance = parseFloat(e.data.balance) || 777.77;
-            console.log('[Pragmatic Canvas] Balance updated in', frameInfo, ':', melBetBalance);
+            melBetBalance = parseFloat(e.data.balance) || 500;
+            console.log('[Pragmatic Canvas] Balance updated via message:', melBetBalance);
         }
     });
     

@@ -44,8 +44,9 @@ The primary objective was to ensure the virtual wallet balance from the MelBet l
 - **MAIN World Injection**: Runs in page's main JavaScript context (not isolated content script)
 - **Early getContext Override**: Intercepts `HTMLCanvasElement.prototype.getContext` before game loads
 - **Prototype Hooks**: Overrides `CanvasRenderingContext2D.prototype.fillText/strokeText`
-- **Smart Replacement**: Only replaces values > $500 to preserve game UI elements
-- **Cross-Frame Communication**: Listens for balance updates via postMessage
+- **Smart Replacement**: Only replaces values > $5000 to preserve game UI elements
+- **HUD Balance Sync**: Top frame reads balance from HUD and broadcasts to iframes
+- **Cross-Frame Communication**: Uses postMessage to sync balance between frames
 
 #### Legacy Layers (Available but not loaded by default)
 - Layer 1: Ultimate Interceptor (`extension/ultimate_interceptor.js`)
@@ -105,11 +106,13 @@ The balance interception now works on Pragmatic Play games (Sweet Bonanza 1000 t
 3. **Prototype-level hooks** that affect all canvas contexts
 
 ### What Works ✅
-- ✅ CREDIT balance display shows custom balance (777.77)
+- ✅ CREDIT balance display shows custom balance from HUD
 - ✅ Canvas 2D text rendering interception
-- ✅ Cross-frame balance synchronization
-- ✅ Smart filtering (only replaces balance, not bet/buy amounts)
+- ✅ Cross-frame balance synchronization via postMessage
+- ✅ Smart filtering (only replaces balance > $5000, not bet/buy amounts)
 - ✅ No performance lag (optimized single-script approach)
+- ✅ Dynamic balance updates - reads from HUD and broadcasts to game iframe
+- ✅ Balance changes during gameplay are reflected in game UI
 
 ### Remaining Considerations
 - Games using WebGL text rendering may need additional work
