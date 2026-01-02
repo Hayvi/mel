@@ -14,6 +14,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse, parse_qs
 from urllib.request import build_opener, HTTPCookieProcessor, Request
 import http.cookiejar
+import threading
+import os
 
 try:
     from playwright.async_api import async_playwright  # type: ignore
@@ -1088,12 +1090,78 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     ap.add_argument("--format", choices=["json", "csv"], default="json")
 
     ap.add_argument("--list-categories", action="store_true")
+    ap.add_argument("--launch", type=int, help="launch browser with extension for specific game id")
 
     return ap.parse_args(argv)
+
+async def launch_integrated_browser(args: argparse.Namespace) -> int:
+    if not _HAS_PLAYWRIGHT or async_playwright is None:
+        print("Error: Playwright not found. Install it with: pip install playwright && playwright install chromium")
+        return 1
+
+    # 1. Start server in a background thread
+    def run_server():
+        serve_launcher(
+            base_url=args.base_url,
+            lang=args.lang,
+            host=args.host,
+            port=args.port,
+            retries=args.retries,
+            backoff_s=args.backoff,
+        )
+
+    t = threading.Thread(target=run_server, daemon=True)
+    t.start()
+    print(f"Server starting on http://{args.host}:{args.port}...")
+    await asyncio.sleep(2) # Give it a second to bind
+
+    # 2. Launch Playwright with extension
+    extension_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "extension"))
+    if not os.path.exists(extension_path):
+        print(f"Error: Extension folder not found at {extension_path}")
+        return 1
+
+    async with async_playwright() as p:
+        print(f"Launching integrated browser with extension from {extension_path}...")
+        
+        # We must use a persistent context to load extensions in Chromium
+        user_data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".playwright_profile"))
+        
+        context = await p.chromium.launch_persistent_context(
+            user_data_dir,
+            headless=False,
+            args=[
+                f"--disable-extensions-except={extension_path}",
+                f"--load-extension={extension_path}",
+            ]
+        )
+        
+        page = context.pages[0] if context.pages else await context.new_page()
+        target_url = f"http://{args.host}:{args.port}/game/{args.launch}"
+        await page.goto(target_url)
+        
+        print(f"Integrated browser navigation complete: {target_url}")
+        print("Keep this terminal open to maintain the server. Close the browser window to exit.")
+        
+        # Keep alive until browser is closed
+        try:
+            while True:
+                if not context.pages:
+                    break
+                await asyncio.sleep(1)
+        except (KeyboardInterrupt, Exception):
+            pass
+        
+        await context.close()
+    
+    return 0
 
 
 def main(argv: List[str]) -> int:
     args = _parse_args(argv)
+
+    if args.launch:
+        return asyncio.run(launch_integrated_browser(args))
 
     mode = args.mode
     if mode == "auto":
