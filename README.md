@@ -15,6 +15,10 @@ A Python script to scrape casino game data from MelBet Tunisia (`melbet-tn.com`)
   - Resolve the direct URL for a game's demo mode.
   - Includes a simple local web server to launch and embed game demos by ID.
   - **In-App Game Browser**: The local launcher can list and search all scraped games, so you can find and launch games without leaving the app.
+- **Virtual Wallet Integration**:
+  - **Custom HUD**: Overlays a professional "VIRTUAL WALLET" HUD on game pages to track a virtual balance in real-time.
+  - **Native Look & Feel**: Includes a browser extension that automatically synchronizes the virtual balance into the game's native UI elements, overriding the native balance displays.
+  - **Zero Install**: Launch everything with a single command; the browser extension is "baked in" and loaded automatically via Playwright.
 
 ## Setup
 
@@ -88,6 +92,20 @@ The launcher includes:
 - A home page to launch a game by ID.
 - A **/games** page to browse and search the entire list of locally scraped games (from `all_games.json`, etc.).
 - A **/api/games** JSON endpoint for programmatic access to the game list.
+- A **Virtual Wallet** HUD at the top of the game page.
+
+### 5. Launch with "Native Look" (Integrated Extension)
+
+This is the recommended mode for a fully immersive experience. It starts the server and opens a browser instance with our integration extension already loaded.
+
+```bash
+python3 scrape_melbet_games.py --launch 95426
+```
+
+This will:
+1. Start the local server in the background.
+2. Launch a Chromium browser session.
+3. Auto-load the `./extension` folder so the virtual balance replaces the game's native balance display.
 
 ## Files
 
