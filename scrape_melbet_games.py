@@ -218,29 +218,130 @@ def serve_launcher(
             self.end_headers()
             self.wfile.write(body)
 
-        def _proxy_with_css_injection(self, target_url: str) -> None:
-            """Fetch game content and inject CSS to hide balance/credit elements."""
+        def _proxy_with_asset_injection(self, target_url: str) -> None:
+            """Fetch game content and inject deep modifications for full UI control."""
             import re
             from urllib.parse import urljoin
             
-            # CSS to hide balance/credit displays
-            HIDE_BALANCE_CSS = """
-<style id="mel-hide-balance">
-/* Hide balance/credit displays across common game providers */
-[class*="balance" i], [class*="Balance"],
-[class*="credit" i], [class*="Credit"],
-[class*="money" i]:not([class*="won"]):not([class*="win"]),
-.balance-panel, .credit-display, .bet-display,
-[data-testid*="balance" i], [data-testid*="credit" i],
-.game-balance, .player-balance, .wallet-balance,
-.info-bar .balance, .bottom-bar .balance,
-/* Pragmatic Play specific */
-.balance-value, .credits-value, .bet-value,
-/* Common patterns */
-.ui-balance, .ui-credit, .ui-money,
-.hud-balance-native, .native-balance {
+            # Advanced injection script for full game control
+            GAME_CONTROL_SCRIPT = """
+<script id="mel-game-controller">
+(function() {
+    'use strict';
+    
+    // Intercept WebGL/Canvas rendering
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(contextType, ...args) {
+        const context = originalGetContext.call(this, contextType, ...args);
+        
+        if (contextType === 'webgl' || contextType === 'webgl2' || contextType === '2d') {
+            console.log('[MelBet] Intercepted canvas context:', contextType);
+            
+            // Hook into rendering pipeline
+            if (context && contextType === '2d') {
+                const originalFillText = context.fillText;
+                context.fillText = function(text, x, y, maxWidth) {
+                    // Replace balance text in real-time
+                    if (/\\d{3}[,.]?\\d{3}/.test(text)) {
+                        const melBalance = window.melBetBalance || '5,000.00';
+                        text = text.replace(/\\d{3}[,.]?\\d{3}[,.]?\\d{2}/, melBalance);
+                    }
+                    return originalFillText.call(this, text, x, y, maxWidth);
+                };
+            }
+        }
+        
+        return context;
+    };
+    
+    // Intercept PIXI.js (common game engine)
+    const originalPIXI = window.PIXI;
+    if (originalPIXI) {
+        const originalTextConstructor = originalPIXI.Text;
+        originalPIXI.Text = function(text, style, canvas) {
+            if (typeof text === 'string' && /\\d{3}[,.]?\\d{3}/.test(text)) {
+                const melBalance = window.melBetBalance || '5,000.00';
+                text = text.replace(/\\d{3}[,.]?\\d{3}[,.]?\\d{2}/, melBalance);
+            }
+            return new originalTextConstructor(text, style, canvas);
+        };
+        Object.setPrototypeOf(originalPIXI.Text, originalTextConstructor);
+        originalPIXI.Text.prototype = originalTextConstructor.prototype;
+    }
+    
+    // Intercept XMLHttpRequest for API calls
+    const originalXHR = window.XMLHttpRequest;
+    window.XMLHttpRequest = function() {
+        const xhr = new originalXHR();
+        const originalSend = xhr.send;
+        
+        xhr.send = function(data) {
+            // Intercept balance API calls
+            if (this.responseURL && this.responseURL.includes('balance')) {
+                const originalOnLoad = this.onload;
+                this.onload = function() {
+                    try {
+                        const response = JSON.parse(this.responseText);
+                        if (response.balance !== undefined) {
+                            response.balance = window.melBetBalance || 5000.00;
+                            Object.defineProperty(this, 'responseText', {
+                                value: JSON.stringify(response),
+                                writable: false
+                            });
+                        }
+                    } catch (e) {}
+                    if (originalOnLoad) originalOnLoad.call(this);
+                };
+            }
+            
+            return originalSend.call(this, data);
+        };
+        
+        return xhr;
+    };
+    
+    // Intercept fetch API
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options) {
+        return originalFetch(url, options).then(response => {
+            if (url.includes('balance') || url.includes('credit')) {
+                return response.clone().json().then(data => {
+                    if (data.balance !== undefined) {
+                        data.balance = window.melBetBalance || 5000.00;
+                    }
+                    if (data.credit !== undefined) {
+                        data.credit = window.melBetBalance || 5000.00;
+                    }
+                    return new Response(JSON.stringify(data), {
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: response.headers
+                    });
+                }).catch(() => response);
+            }
+            return response;
+        });
+    };
+    
+    // Global balance sync
+    window.melBetBalance = 5000.00;
+    window.addEventListener('message', (e) => {
+        if (e.data && e.data.type === 'MELBET_BALANCE_UPDATE') {
+            window.melBetBalance = parseFloat(e.data.balance) || 5000.00;
+            console.log('[MelBet] Updated global balance:', window.melBetBalance);
+        }
+    });
+    
+    console.log('[MelBet] Deep game controller initialized');
+})();
+</script>
+
+<style id="mel-deep-hide">
+/* Aggressive hiding with !important */
+[class*="credit" i], [class*="balance" i], [class*="money" i]:not([class*="win"]) {
     visibility: hidden !important;
     opacity: 0 !important;
+    color: transparent !important;
 }
 </style>
 """
@@ -282,11 +383,11 @@ def serve_launcher(
                     flags=re.IGNORECASE
                 )
                 
-                # Inject CSS before </head> or at start of <body>
+                # Inject deep control script before </head> or at start of <body>
                 if "</head>" in html_content.lower():
                     html_content = re.sub(
                         r'(</head>)',
-                        HIDE_BALANCE_CSS + r'\1',
+                        GAME_CONTROL_SCRIPT + r'\1',
                         html_content,
                         count=1,
                         flags=re.IGNORECASE
@@ -294,13 +395,13 @@ def serve_launcher(
                 elif "<body" in html_content.lower():
                     html_content = re.sub(
                         r'(<body[^>]*>)',
-                        r'\1' + HIDE_BALANCE_CSS,
+                        r'\1' + GAME_CONTROL_SCRIPT,
                         html_content,
                         count=1,
                         flags=re.IGNORECASE
                     )
                 else:
-                    html_content = HIDE_BALANCE_CSS + html_content
+                    html_content = GAME_CONTROL_SCRIPT + html_content
                 
                 body = html_content.encode("utf-8")
                 self.send_response(200)

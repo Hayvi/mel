@@ -5,7 +5,8 @@
   "description": "Integrates Virtual Wallet balance into game UI natively.",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -16,10 +17,12 @@
         "*://*/*"
       ],
       "js": [
+        "pragmatic_specific.js",
         "content.js"
       ],
       "all_frames": true,
-      "run_at": "document_start"
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ]
 }

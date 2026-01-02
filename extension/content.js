@@ -1,4 +1,4 @@
-// MelBet Game Integrator Content Script
+// MelBet Game Integrator Content Script - Deep Control Mode
 
 const SELECTORS = [
     '.credits-value',
@@ -17,6 +17,107 @@ const SELECTORS = [
 ];
 
 let currentBalance = "0.00";
+
+const isTopFrame = window === window.top;
+
+// Deep game control initialization
+function initDeepGameControl() {
+    // Override canvas rendering
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function(contextType, ...args) {
+        const context = originalGetContext.call(this, contextType, ...args);
+        
+        if (context && contextType === '2d') {
+            const originalFillText = context.fillText;
+            context.fillText = function(text, x, y, maxWidth) {
+                if (typeof text === 'string' && /\d{3}[,.]?\d{3}/.test(text)) {
+                    const melBalance = parseFloat(currentBalance.replace(/,/g, '')) || 0;
+                    text = text.replace(/\d{3}[,.]?\d{3}[,.]?\d{2}/g, melBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+                }
+                return originalFillText.call(this, text, x, y, maxWidth);
+            };
+            
+            const originalStrokeText = context.strokeText;
+            context.strokeText = function(text, x, y, maxWidth) {
+                if (typeof text === 'string' && /\d{3}[,.]?\d{3}/.test(text)) {
+                    const melBalance = parseFloat(currentBalance.replace(/,/g, '')) || 0;
+                    text = text.replace(/\d{3}[,.]?\d{3}[,.]?\d{2}/g, melBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+                }
+                return originalStrokeText.call(this, text, x, y, maxWidth);
+            };
+        }
+        
+        return context;
+    };
+    
+    // Override PIXI.js Text objects
+    if (window.PIXI && window.PIXI.Text) {
+        const originalPIXIText = window.PIXI.Text;
+        window.PIXI.Text = function(text, style, canvas) {
+            if (typeof text === 'string' && /\d{3}[,.]?\d{3}/.test(text)) {
+                const melBalance = parseFloat(currentBalance.replace(/,/g, '')) || 0;
+                text = text.replace(/\d{3}[,.]?\d{3}[,.]?\d{2}/g, melBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+            }
+            return new originalPIXIText(text, style, canvas);
+        };
+        Object.setPrototypeOf(window.PIXI.Text, originalPIXIText);
+        window.PIXI.Text.prototype = originalPIXIText.prototype;
+    }
+    
+    // Override innerHTML and textContent globally
+    const originalInnerHTML = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    if (originalInnerHTML) {
+        Object.defineProperty(Element.prototype, 'innerHTML', {
+            get: originalInnerHTML.get,
+            set: function(value) {
+                if (typeof value === 'string' && /\d{3}[,.]?\d{3}/.test(value)) {
+                    const melBalance = parseFloat(currentBalance.replace(/,/g, '')) || 0;
+                    value = value.replace(/\b\d{3}[,.]?\d{3}[,.]?\d{2}\b/g, melBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+                }
+                return originalInnerHTML.set.call(this, value);
+            }
+        });
+    }
+    
+    const originalTextContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent');
+    if (originalTextContent) {
+        Object.defineProperty(Node.prototype, 'textContent', {
+            get: originalTextContent.get,
+            set: function(value) {
+                if (typeof value === 'string' && /\d{3}[,.]?\d{3}/.test(value)) {
+                    const melBalance = parseFloat(currentBalance.replace(/,/g, '')) || 0;
+                    value = value.replace(/\b\d{3}[,.]?\d{3}[,.]?\d{2}\b/g, melBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+                }
+                return originalTextContent.set.call(this, value);
+            }
+        });
+    }
+    
+    // Override fetch and XMLHttpRequest for API interception
+    const originalFetch = window.fetch;
+    window.fetch = function(url, options) {
+        return originalFetch(url, options).then(response => {
+            if (typeof url === 'string' && (url.includes('balance') || url.includes('credit'))) {
+                return response.clone().json().then(data => {
+                    if (data.balance !== undefined) {
+                        data.balance = parseFloat(currentBalance.replace(/,/g, '')) || 0;
+                    }
+                    if (data.credit !== undefined) {
+                        data.credit = parseFloat(currentBalance.replace(/,/g, '')) || 0;
+                    }
+                    return new Response(JSON.stringify(data), {
+                        status: response.status,
+                        statusText: response.statusText,
+                        headers: response.headers
+                    });
+                }).catch(() => response);
+            }
+            return response;
+        });
+    };
+    
+    console.log("[MelBet Extension] Deep game control initialized");
+}
 
 const isTopFrame = window === window.top;
 
@@ -53,6 +154,9 @@ if (isTopFrame) {
     });
 
 } else {
+    // Initialize deep game control for sub-frames
+    initDeepGameControl();
+    
     const updateUI = (balance) => {
         if (!balance) return;
         currentBalance = balance;
@@ -89,7 +193,7 @@ if (isTopFrame) {
     };
     startObserver();
 
-    setInterval(() => updateUI(currentBalance), 1000);
+    setInterval(() => updateUI(currentBalance), 2000); // Reduced frequency
 }
 
 function injectNativeLook(balanceStr, root) {
