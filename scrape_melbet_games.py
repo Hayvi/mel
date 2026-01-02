@@ -590,7 +590,7 @@ def serve_launcher(
         <div class=\"hud-balance\">Loading...</div>
     </div>
 
-    <iframe src=\"/proxy?url={html.escape(demo_url)}\" allowfullscreen></iframe>
+    <iframe src=\"{demo_url}\" allowfullscreen></iframe>
 
     <script>
         let walletBalance = 0;
