@@ -463,15 +463,15 @@ def serve_launcher(
       .hud-btn:hover {{ background: #444; }}
 
       .hud-mask {{
-        position: absolute;
+        position: fixed;
         bottom: 0;
         left: 0;
         right: 0;
-        height: 32px; /* Approx height of bottom bar */
+        height: 80px; /* Tall enough to cover fullscreen native UI */
         background: #000;
-        z-index: 50;
+        z-index: 9999;
         display: none; /* Hidden by default */
-        pointer-events: none; /* Let clicks pass through? No, we want to block view. But controls... tricky. */
+        pointer-events: none; /* Allow clicks through to game controls underneath */
       }}
       .hud-mask.active {{ display: block; }}
 
