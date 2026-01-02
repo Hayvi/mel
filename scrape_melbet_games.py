@@ -5,10 +5,13 @@ import json
 import sys
 import time
 import webbrowser
+import html
+import http.server
+import socketserver
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse, parse_qs
 from urllib.request import build_opener, HTTPCookieProcessor, Request
 import http.cookiejar
 
@@ -120,6 +123,493 @@ def _get_demo_link_http(
     if not isinstance(j, dict) or not isinstance(j.get("link"), str) or not j.get("link"):
         raise RuntimeError("Demo link not found in response")
     return str(j["link"])
+
+
+def serve_launcher(
+    base_url: str,
+    lang: str,
+    host: str,
+    port: int,
+    retries: int,
+    backoff_s: float,
+) -> None:
+    cache: Dict[int, str] = {}
+    games_cache: Optional[List[Dict[str, Any]]] = None
+    games_cache: Optional[List[Dict[str, Any]]] = None
+    games_source: Optional[str] = None
+
+    class Wallet:
+        def __init__(self, initial_balance: float = 1000.0):
+            self.balance = initial_balance
+
+        def update(self, amount: float):
+            self.balance = amount
+
+    wallet = Wallet()
+
+    def _load_games_index() -> List[Dict[str, Any]]:
+        nonlocal games_cache, games_source
+        if games_cache is not None:
+            return games_cache
+
+        candidates = [
+            "all_games.json",
+            "all_games_enriched.json",
+            "sample_all_categories2.json",
+            "sample_all_categories.json",
+            "sample_games.json",
+        ]
+        for path in candidates:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except FileNotFoundError:
+                continue
+            except Exception:
+                continue
+
+            if not isinstance(data, list):
+                continue
+
+            out: List[Dict[str, Any]] = []
+            for g in data:
+                if not isinstance(g, dict):
+                    continue
+                if "id" not in g:
+                    continue
+                try:
+                    gid = int(g.get("id"))
+                except Exception:
+                    continue
+
+                name = g.get("name")
+                out.append(
+                    {
+                        "id": gid,
+                        "name": str(name) if name is not None else "",
+                    }
+                )
+
+            games_cache = out
+            games_source = path
+            return out
+
+        games_cache = []
+        games_source = None
+        return games_cache
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def _send_html(self, status: int, html: str) -> None:
+            body = html.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_json(self, status: int, payload: Any) -> None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            path = parsed.path or "/"
+            qs = parse_qs(parsed.query or "")
+            if path == "/api/wallet/balance":
+                self._send_json(200, {"balance": wallet.balance, "currency": "FUN"})
+                return
+
+            if path == "/api/games":
+                q_raw = ((qs.get("q") or [""])[0] or "").strip()
+                q = q_raw.lower()
+                try:
+                    limit = int((qs.get("limit") or ["50"])[0])
+                except Exception:
+                    limit = 50
+                try:
+                    offset = int((qs.get("offset") or ["0"])[0])
+                except Exception:
+                    offset = 0
+
+                limit = max(1, min(200, limit))
+                offset = max(0, offset)
+
+                games = _load_games_index()
+                if q:
+                    filtered = [g for g in games if q in str(g.get("id", "")).lower() or q in str(g.get("name", "")).lower()]
+                else:
+                    filtered = games
+
+                page = filtered[offset : offset + limit]
+                self._send_json(
+                    200,
+                    {
+                        "source": games_source,
+                        "total": len(filtered),
+                        "offset": offset,
+                        "limit": limit,
+                        "items": page,
+                    },
+                )
+                return
+
+            if path == "/games":
+                q_raw = ((qs.get("q") or [""])[0] or "").strip()
+                q = q_raw.lower()
+                try:
+                    limit = int((qs.get("limit") or ["50"])[0])
+                except Exception:
+                    limit = 50
+                try:
+                    offset = int((qs.get("offset") or ["0"])[0])
+                except Exception:
+                    offset = 0
+
+                limit = max(1, min(200, limit))
+                offset = max(0, offset)
+
+                games = _load_games_index()
+                if q:
+                    filtered = [g for g in games if q in str(g.get("id", "")).lower() or q in str(g.get("name", "")).lower()]
+                else:
+                    filtered = games
+
+                total = len(filtered)
+                page = filtered[offset : offset + limit]
+
+                def _make_link(new_offset: int) -> str:
+                    params: Dict[str, Any] = {"limit": limit, "offset": new_offset}
+                    if q_raw:
+                        params["q"] = q_raw
+                    return "/games?" + urlencode(params)
+
+                prev_link = _make_link(max(0, offset - limit)) if offset > 0 else ""
+                next_link = _make_link(offset + limit) if (offset + limit) < total else ""
+
+                rows = "\n".join(
+                    (
+                        "<tr>"
+                        f"<td><code>{int(g.get('id'))}</code></td>"
+                        f"<td>{html.escape(str(g.get('name') or ''))}</td>"
+                        f"<td><a href=\"/game/{int(g.get('id'))}\">Launch</a></td>"
+                        "</tr>"
+                    )
+                    for g in page
+                )
+
+                src = html.escape(games_source or "(none)")
+                self._send_html(
+                    200,
+                    f"""<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>Games</title>
+    <style>
+      body {{ font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; margin: 24px; }}
+      a {{ color: #2563eb; text-decoration: none; }}
+      .top {{ display:flex; gap: 12px; align-items: center; flex-wrap: wrap; }}
+      input {{ padding: 10px; font-size: 16px; width: 280px; }}
+      button {{ padding: 10px 14px; font-size: 16px; }}
+      table {{ width: 100%; border-collapse: collapse; margin-top: 16px; }}
+      th, td {{ padding: 10px; border-bottom: 1px solid #eee; text-align: left; }}
+      code {{ background: #f3f4f6; padding: 2px 6px; border-radius: 6px; }}
+      .muted {{ color: #666; }}
+      .pager {{ margin-top: 14px; display:flex; gap: 12px; align-items:center; }}
+    </style>
+  </head>
+  <body>
+    <div class=\"top\">
+      <h1 style=\"margin:0\">Games</h1>
+      <a href=\"/\">Home</a>
+      <span class=\"muted\">source: <code>{src}</code></span>
+    </div>
+    <form action=\"/games\" method=\"get\" style=\"margin-top:12px\">
+      <input name=\"q\" value=\"{html.escape(q_raw)}\" placeholder=\"search by id or name\" />
+      <input type=\"hidden\" name=\"limit\" value=\"{limit}\" />
+      <button type=\"submit\">Search</button>
+      <a href=\"/games\" style=\"margin-left:10px\">Clear</a>
+    </form>
+    <div class=\"muted\" style=\"margin-top:8px\">showing {offset + 1 if total else 0}-{min(offset + limit, total)} of {total}</div>
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Name</th><th></th></tr>
+      </thead>
+      <tbody>
+        {rows if rows else '<tr><td colspan="3" class="muted">No results</td></tr>'}
+      </tbody>
+    </table>
+    <div class=\"pager\">
+      {f'<a href="{prev_link}">Prev</a>' if prev_link else '<span class="muted">Prev</span>'}
+      {f'<a href="{next_link}">Next</a>' if next_link else '<span class="muted">Next</span>'}
+      <span class=\"muted\">|</span>
+      <a class=\"muted\" href=\"/api/games?q={html.escape(q_raw)}&limit={limit}&offset={offset}\">api</a>
+    </div>
+  </body>
+</html>""",
+                )
+                return
+
+            game_id: Optional[int] = None
+            if path.startswith("/game/"):
+                tail = path[len("/game/"):].strip("/")
+                if tail:
+                    try:
+                        game_id = int(tail)
+                    except Exception:
+                        game_id = None
+            elif path in ("/game", "/open"):
+                v = (qs.get("id") or [None])[0]
+                if v is not None:
+                    try:
+                        game_id = int(v)
+                    except Exception:
+                        game_id = None
+
+            if path == "/":
+                self._send_html(
+                    200,
+                    """<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>MelBet Game Launcher</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; margin: 24px; }
+      input { padding: 10px; font-size: 16px; width: 220px; }
+      button { padding: 10px 14px; font-size: 16px; margin-left: 8px; }
+      .hint { color: #555; margin-top: 10px; }
+    </style>
+  </head>
+  <body>
+    <h1>MelBet Demo Game Launcher</h1>
+    <form action=\"/game\" method=\"get\">
+      <input name=\"id\" placeholder=\"game id (e.g. 95426)\" />
+      <button type=\"submit\">Launch</button>
+    </form>
+    <div class=\"hint\">Tip: open <code>/game/&lt;id&gt;</code> directly.</div>
+    <div class=\"hint\"><a href=\"/games\">Browse games</a> (local list)</div>
+  </body>
+</html>""",
+                )
+                return
+
+            if game_id is None:
+                self._send_html(404, "<h1>Not found</h1>")
+                return
+
+            try:
+                if game_id in cache:
+                    demo_url = cache[game_id]
+                else:
+                    demo_url = _get_demo_link_http(
+                        base_url=base_url,
+                        lang=lang,
+                        game_id=game_id,
+                        retries=retries,
+                        backoff_s=backoff_s,
+                    )
+                    cache[game_id] = demo_url
+            except Exception as e:
+                self._send_html(500, f"<h1>Failed to resolve demo url</h1><pre>{e}</pre>")
+                return
+
+            if path == "/open":
+                self.send_response(302)
+                self.send_header("Location", demo_url)
+                self.end_headers()
+                return
+
+            self._send_html(
+                200,
+                f"""<!doctype html>
+<html>
+  <head>
+    <meta charset=\"utf-8\" />
+    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+    <title>Game {game_id}</title>
+    <style>
+      body {{ margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, sans-serif; }}
+      header {{ display: flex; gap: 12px; align-items: center; padding: 10px 12px; background: #111; color: #fff; }}
+      a {{ color: #7dd3fc; text-decoration: none; }}
+      iframe {{ width: 100vw; height: calc(100vh - 44px); border: 0; }}
+
+      .hud {{
+        position: absolute;
+        top: 44px;
+        left: 0;
+        right: 0;
+        height: 48px;
+        background: rgba(0,0,0,0.9);
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        z-index: 100;
+        backdrop-filter: blur(4px);
+        border-bottom: 1px solid #333;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+      }}
+      .hud-balance {{ font-size: 20px; font-weight: bold; color: #4ade80; font-family: monospace; letter-spacing: -0.5px; }}
+      .hud-title {{ font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
+      .hud-btn {{ background: #333; border: 1px solid #555; color: #eee; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 12px; }}
+      .hud-btn:hover {{ background: #444; }}
+
+      .hud-mask {{
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 32px; /* Approx height of bottom bar */
+        background: #000;
+        z-index: 50;
+        display: none; /* Hidden by default */
+        pointer-events: none; /* Let clicks pass through? No, we want to block view. But controls... tricky. */
+      }}
+      .hud-mask.active {{ display: block; }}
+
+      code {{ background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 6px; }}
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Game {game_id}</strong>
+      <a href=\"/\">Home</a>
+      <a href=\"/open?id={game_id}\" target=\"_blank\">Open directly</a>
+      <span style=\"opacity:.8\">(demo)</span>
+      <span style=\"margin-left:auto; opacity:.7\">src: <code>{demo_url}</code></span>
+    </header>
+    <div class=\"hud\">
+        <div style=\"display:flex; align-items:center\">
+             <div class=\"hud-title\">VIRTUAL WALLET</div>
+             <button class=\"hud-btn\" onclick=\"toggleMask()\">Toggle Mask</button>
+        </div>
+        <div class=\"hud-balance\">Loading...</div>
+    </div>
+
+    <div class=\"hud-mask\"></div>
+
+    <iframe src=\"{demo_url}\" allowfullscreen></iframe>
+
+    <script>
+        let walletBalance = 0;
+        let lastGameBalance = null;
+
+        const hudBalance = document.querySelector('.hud-balance');
+
+        async function fetchWallet() {{
+            try {{
+                const res = await fetch('/api/wallet/balance');
+                const data = await res.json();
+                walletBalance = data.balance;
+                updateHud();
+            }} catch (e) {{
+                console.error(\"Failed to fetch wallet\", e);
+            }}
+        }}
+
+        async function syncWallet(newBalance) {{
+            try {{
+                const res = await fetch('/api/wallet/sync', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ balance: newBalance }})
+                }});
+                const data = await res.json();
+                if (data.success) {{
+                    walletBalance = data.balance;
+                    updateHud();
+                }}
+            }} catch (e) {{
+                console.error(\"Failed to sync wallet\", e);
+            }}
+        }}
+
+        function updateHud() {{
+            hudBalance.textContent = \"FUN \" + walletBalance.toFixed(2);
+        }}
+
+        function toggleMask() {{
+             const mask = document.querySelector('.hud-mask');
+             mask.classList.toggle('active');
+        }}
+
+        window.addEventListener('message', (e) => {{
+            let data = e.data;
+            try {{ if (typeof data === 'string') data = JSON.parse(data); }} catch(e){{}}
+            
+            if (!data) return;
+
+            if (data.name === 'post_updateBalance' || (data.event === 'updateBalance' && data.params && data.params.total)) {{
+                const rawAmount = data.params?.total?.amount;
+                if (typeof rawAmount === 'number') {{
+                    const gameVal = rawAmount / 100.0; 
+
+                    if (lastGameBalance === null) {{
+                        lastGameBalance = gameVal;
+                        console.log(\"Initialized baseline game balance:\", gameVal);
+                    }} else {{
+                        const delta = gameVal - lastGameBalance;
+                        lastGameBalance = gameVal;
+                        
+                        if (delta !== 0) {{
+                            walletBalance += delta;
+                            syncWallet(walletBalance);
+                        }}
+                    }}
+                }}
+            }}
+        }});
+
+        fetchWallet();
+    </script>
+  </body>
+</html>""",
+            )
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            path = parsed.path or "/"
+
+            if path == "/api/wallet/init":
+                content_len = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_len) if content_len > 0 else b"{}"
+                try:
+                    data = json.loads(body)
+                    amount = float(data.get("amount", 1000.0))
+                except Exception:
+                    amount = 1000.0
+                wallet.update(amount)
+                self._send_json(200, {"balance": wallet.balance})
+                return
+
+            if path == "/api/wallet/sync":
+                content_len = int(self.headers.get("Content-Length", 0))
+                body = self.rfile.read(content_len)
+                try:
+                    data = json.loads(body)
+                    # Expected payload from client: {"balance": 123.45}
+                    # We trust the client for this MVP demo
+                    new_balance = float(data.get("balance", wallet.balance))
+                    wallet.update(new_balance)
+                    self._send_json(200, {"success": True, "balance": wallet.balance})
+                except Exception as e:
+                    self._send_json(400, {"success": False, "error": str(e)})
+                return
+
+            self._send_json(404, {"error": "Not found"})
+
+    with socketserver.ThreadingTCPServer((host, port), Handler) as httpd:
+        httpd.allow_reuse_address = True
+        sys.stdout.write(f"Launcher running on http://{host}:{port}/\n")
+        httpd.serve_forever()
 
 
 def _http_get_json_with_retries(opener, url: str, retries: int, backoff_s: float) -> Any:
@@ -489,6 +979,10 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
     ap.add_argument("--open-game", action="store_true")
     ap.add_argument("--demo", action="store_true")
 
+    ap.add_argument("--serve", action="store_true")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8000)
+
     ap.add_argument("--category-id", type=int, action="append", dest="category_ids")
     ap.add_argument("--all-categories", action="store_true")
     ap.add_argument("--brand-id", type=int, action="append", dest="brand_ids")
@@ -530,6 +1024,17 @@ def main(argv: List[str]) -> int:
         sys.stdout.write(url + "\n")
         if args.open_game:
             webbrowser.open(url, new=2)
+        return 0
+
+    if args.serve:
+        serve_launcher(
+            base_url=args.base_url,
+            lang=args.lang,
+            host=args.host,
+            port=int(args.port),
+            retries=args.retries,
+            backoff_s=args.backoff,
+        )
         return 0
 
     if args.list_categories:
