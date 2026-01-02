@@ -557,23 +557,22 @@ def serve_launcher(
       .hud {{
         position: absolute;
         top: 44px;
-        left: 0;
-        right: 0;
-        height: 48px;
-        background: rgba(0,0,0,0.9);
+        right: 12px;
+        width: 200px;
+        height: 32px;
+        background: rgba(0,0,0,0.7);
         color: #fff;
         display: flex;
         align-items: center;
-        justify-content: space-between;
-        padding: 0 24px;
+        justify-content: flex-end;
+        padding: 0 16px;
         z-index: 100;
         backdrop-filter: blur(4px);
-        border-bottom: 1px solid #333;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+        border-radius: 6px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        font-size: 12px;
       }}
-      .hud-balance {{ font-size: 20px; font-weight: bold; color: #4ade80; font-family: monospace; letter-spacing: -0.5px; }}
-      .hud-title {{ font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
-
+      .hud-balance {{ font-size: 16px; font-weight: bold; color: #4ade80; font-family: monospace; }}
 
       code {{ background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 6px; }}
     </style>
@@ -587,9 +586,6 @@ def serve_launcher(
       <span style=\"margin-left:auto; opacity:.7\">src: <code>{demo_url}</code></span>
     </header>
     <div class=\"hud\">
-        <div style=\"display:flex; align-items:center\">
-             <div class=\"hud-title\">VIRTUAL WALLET</div>
-        </div>
         <div class=\"hud-balance\">Loading...</div>
     </div>
 
@@ -630,7 +626,7 @@ def serve_launcher(
         }}
 
         function updateHud() {{
-            hudBalance.textContent = \"FUN \" + walletBalance.toFixed(2);
+            hudBalance.textContent = walletBalance.toFixed(2);
         }}
 
         window.addEventListener('message', (e) => {{
