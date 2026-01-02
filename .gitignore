@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+all_games.json
+sample_games.json
+sample_all_categories.json
+sample_all_categories2.json
