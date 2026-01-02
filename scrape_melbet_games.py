@@ -215,12 +215,123 @@ def serve_launcher(
             self.end_headers()
             self.wfile.write(body)
 
+        def _proxy_with_css_injection(self, target_url: str) -> None:
+            """Fetch game content and inject CSS to hide balance/credit elements."""
+            import re
+            from urllib.parse import urljoin
+            
+            # CSS to hide balance/credit displays
+            HIDE_BALANCE_CSS = """
+<style id="mel-hide-balance">
+/* Hide balance/credit displays across common game providers */
+[class*="balance" i], [class*="Balance"],
+[class*="credit" i], [class*="Credit"],
+[class*="money" i]:not([class*="won"]):not([class*="win"]),
+.balance-panel, .credit-display, .bet-display,
+[data-testid*="balance" i], [data-testid*="credit" i],
+.game-balance, .player-balance, .wallet-balance,
+.info-bar .balance, .bottom-bar .balance,
+/* Pragmatic Play specific */
+.balance-value, .credits-value, .bet-value,
+/* Common patterns */
+.ui-balance, .ui-credit, .ui-money,
+.hud-balance-native, .native-balance {
+    visibility: hidden !important;
+    opacity: 0 !important;
+}
+</style>
+"""
+            
+            # Fetch the target URL
+            req = Request(target_url, method="GET")
+            req.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            req.add_header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            
+            with build_opener().open(req, timeout=30) as resp:
+                content_type = resp.headers.get("Content-Type", "text/html")
+                raw_data = resp.read()
+            
+            # Only inject CSS into HTML content
+            if "text/html" in content_type.lower():
+                try:
+                    html_content = raw_data.decode("utf-8", errors="replace")
+                except Exception:
+                    html_content = raw_data.decode("latin-1", errors="replace")
+                
+                # Rewrite relative URLs to absolute
+                base_parsed = urlparse(target_url)
+                base_origin = f"{base_parsed.scheme}://{base_parsed.netloc}"
+                
+                def make_absolute(match):
+                    attr = match.group(1)
+                    quote = match.group(2)
+                    url = match.group(3)
+                    if url.startswith(("http://", "https://", "data:", "javascript:", "//")):
+                        return match.group(0)
+                    abs_url = urljoin(target_url, url)
+                    return f'{attr}={quote}{abs_url}{quote}'
+                
+                # Rewrite src, href, action attributes
+                html_content = re.sub(
+                    r'(src|href|action)=(["\'])([^"\']*)\2',
+                    make_absolute,
+                    html_content,
+                    flags=re.IGNORECASE
+                )
+                
+                # Inject CSS before </head> or at start of <body>
+                if "</head>" in html_content.lower():
+                    html_content = re.sub(
+                        r'(</head>)',
+                        HIDE_BALANCE_CSS + r'\1',
+                        html_content,
+                        count=1,
+                        flags=re.IGNORECASE
+                    )
+                elif "<body" in html_content.lower():
+                    html_content = re.sub(
+                        r'(<body[^>]*>)',
+                        r'\1' + HIDE_BALANCE_CSS,
+                        html_content,
+                        count=1,
+                        flags=re.IGNORECASE
+                    )
+                else:
+                    html_content = HIDE_BALANCE_CSS + html_content
+                
+                body = html_content.encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+            else:
+                # Pass through non-HTML content as-is
+                body = raw_data
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+            
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_GET(self):
             parsed = urlparse(self.path)
             path = parsed.path or "/"
             qs = parse_qs(parsed.query or "")
             if path == "/api/wallet/balance":
                 self._send_json(200, {"balance": wallet.balance, "currency": "FUN"})
+                return
+
+            # Proxy endpoint - fetches game content and injects CSS to hide balance
+            if path == "/proxy":
+                target_url = (qs.get("url") or [None])[0]
+                if not target_url:
+                    self._send_html(400, "<h1>Missing url parameter</h1>")
+                    return
+                
+                try:
+                    self._proxy_with_css_injection(target_url)
+                except Exception as e:
+                    self._send_html(500, f"<h1>Proxy error</h1><pre>{html.escape(str(e))}</pre>")
                 return
 
             if path == "/api/games":
@@ -459,21 +570,7 @@ def serve_launcher(
       }}
       .hud-balance {{ font-size: 20px; font-weight: bold; color: #4ade80; font-family: monospace; letter-spacing: -0.5px; }}
       .hud-title {{ font-size: 13px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }}
-      .hud-btn {{ background: #333; border: 1px solid #555; color: #eee; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-left: 12px; }}
-      .hud-btn:hover {{ background: #444; }}
 
-      .hud-mask {{
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        height: 80px; /* Tall enough to cover fullscreen native UI */
-        background: #000;
-        z-index: 9999;
-        display: none; /* Hidden by default */
-        pointer-events: none; /* Allow clicks through to game controls underneath */
-      }}
-      .hud-mask.active {{ display: block; }}
 
       code {{ background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 6px; }}
     </style>
@@ -489,14 +586,11 @@ def serve_launcher(
     <div class=\"hud\">
         <div style=\"display:flex; align-items:center\">
              <div class=\"hud-title\">VIRTUAL WALLET</div>
-             <button class=\"hud-btn\" onclick=\"toggleMask()\">Toggle Mask</button>
         </div>
         <div class=\"hud-balance\">Loading...</div>
     </div>
 
-    <div class=\"hud-mask\"></div>
-
-    <iframe src=\"{demo_url}\" allowfullscreen></iframe>
+    <iframe src=\"/proxy?url={html.escape(demo_url)}\" allowfullscreen></iframe>
 
     <script>
         let walletBalance = 0;
@@ -534,11 +628,6 @@ def serve_launcher(
 
         function updateHud() {{
             hudBalance.textContent = \"FUN \" + walletBalance.toFixed(2);
-        }}
-
-        function toggleMask() {{
-             const mask = document.querySelector('.hud-mask');
-             mask.classList.toggle('active');
         }}
 
         window.addEventListener('message', (e) => {{
