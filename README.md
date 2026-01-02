@@ -11,9 +11,10 @@ A Python script to scrape casino game data from MelBet Tunisia (`melbet-tn.com`)
 - **Flexible Data Export**: 
   - Scrape all games, or filter by one or more categories.
   - Output formats: JSON (default) or CSV.
-- **Game Launching**: 
+- **Game Launching**:
   - Resolve the direct URL for a game's demo mode.
   - Includes a simple local web server to launch and embed game demos by ID.
+  - **In-App Game Browser**: The local launcher can list and search all scraped games, so you can find and launch games without leaving the app.
 
 ## Setup
 
@@ -75,13 +76,18 @@ python3 scrape_melbet_games.py --list-categories
 
 ### 4. Run the Local Game Launcher
 
-This starts a local web server that lets you launch any game demo by its ID.
+This starts a local web server that lets you launch any game demo by its ID. It also includes an in-app browser to search your locally scraped games.
 
 ```bash
 python3 scrape_melbet_games.py --serve
 ```
 
 Then open your browser to `http://127.0.0.1:8000`.
+
+The launcher includes:
+- A home page to launch a game by ID.
+- A **/games** page to browse and search the entire list of locally scraped games (from `all_games.json`, etc.).
+- A **/api/games** JSON endpoint for programmatic access to the game list.
 
 ## Files
 
