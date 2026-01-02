@@ -3,14 +3,23 @@
   "name": "MelBet Game Integrator",
   "version": "1.0",
   "description": "Integrates Virtual Wallet balance into game UI natively.",
-  "permissions": ["storage", "activeTab"],
-  "host_permissions": ["http://127.0.0.1:8000/*", "https://*.net/*", "https://*.com/*"],
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
   "content_scripts": [
     {
-      "matches": ["http://127.0.0.1:8000/game/*", "https://demogamesfree.uxzaxumozp.net/*"],
-      "js": ["content.js"],
+      "matches": [
+        "*://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
       "all_frames": true,
-      "run_at": "document_end"
+      "run_at": "document_start"
     }
   ]
 }

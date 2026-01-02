@@ -1,7 +1,14 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
 all_games.json
+all_games_enriched.json
 sample_games.json
 sample_all_categories.json
 sample_all_categories2.json
+scraped_games.json
+
+# Playwright browser profiles (generated at runtime)
+.playwright_profile/
+playwright_profile/

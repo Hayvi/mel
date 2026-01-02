@@ -134,6 +134,7 @@ def serve_launcher(
     port: int,
     retries: int,
     backoff_s: float,
+    initial_balance: float = 1000.0,
 ) -> None:
     cache: Dict[int, str] = {}
     games_cache: Optional[List[Dict[str, Any]]] = None
@@ -147,7 +148,7 @@ def serve_launcher(
         def update(self, amount: float):
             self.balance = amount
 
-    wallet = Wallet()
+    wallet = Wallet(initial_balance=initial_balance)
 
     def _load_games_index() -> List[Dict[str, Any]]:
         nonlocal games_cache, games_source
@@ -1088,9 +1089,11 @@ def _parse_args(argv: List[str]) -> argparse.Namespace:
 
     ap.add_argument("--out", default="games.json")
     ap.add_argument("--format", choices=["json", "csv"], default="json")
+    ap.add_argument("--balance", type=float, default=1000.0, help="initial virtual wallet balance")
 
     ap.add_argument("--list-categories", action="store_true")
     ap.add_argument("--launch", type=int, help="launch browser with extension for specific game id")
+    ap.add_argument("--test-extension", action="store_true", help="Run automated verification of extension integration")
 
     return ap.parse_args(argv)
 
@@ -1108,6 +1111,7 @@ async def launch_integrated_browser(args: argparse.Namespace) -> int:
             port=args.port,
             retries=args.retries,
             backoff_s=args.backoff,
+            initial_balance=args.balance,
         )
 
     t = threading.Thread(target=run_server, daemon=True)
@@ -1125,7 +1129,7 @@ async def launch_integrated_browser(args: argparse.Namespace) -> int:
         print(f"Launching integrated browser with extension from {extension_path}...")
         
         # We must use a persistent context to load extensions in Chromium
-        user_data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".playwright_profile"))
+        user_data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "playwright_profile"))
         
         context = await p.chromium.launch_persistent_context(
             user_data_dir,
@@ -1137,13 +1141,28 @@ async def launch_integrated_browser(args: argparse.Namespace) -> int:
         )
         
         page = context.pages[0] if context.pages else await context.new_page()
+        
         target_url = f"http://{args.host}:{args.port}/game/{args.launch}"
-        await page.goto(target_url)
+        await page.goto(target_url, timeout=60000)
         
-        print(f"Integrated browser navigation complete: {target_url}")
-        print("Keep this terminal open to maintain the server. Close the browser window to exit.")
-        
-        # Keep alive until browser is closed
+        # Keep alive until browser is closed (unless testing)
+        if args.test_extension:
+            print("TEST MODE: Waiting for extension to sync...")
+            try:
+                # Wait for initial load - relaxation for canvas games which poll constantly
+                # await page.wait_for_load_state("networkidle") 
+                await asyncio.sleep(8) # Allow extension to inject and iframe to load
+                
+                output_path = os.path.abspath("extension_verification.png")
+                await page.screenshot(path=output_path, timeout=60000)
+                print(f"TEST SUCCESS: Screenshot saved to {output_path}")
+                
+            except Exception as e:
+                print(f"TEST FAILED: {e}")
+            finally:
+                await context.close()
+                return 0
+
         try:
             while True:
                 if not context.pages:
@@ -1191,6 +1210,7 @@ def main(argv: List[str]) -> int:
             port=int(args.port),
             retries=args.retries,
             backoff_s=args.backoff,
+            initial_balance=args.balance,
         )
         return 0
 
